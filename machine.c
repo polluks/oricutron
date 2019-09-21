@@ -288,6 +288,10 @@ void setromon( struct machine *oric )
   else if( oric->drivetype == DRV_PRAVETZ )
   {
     oric->romon = !oric->pravetz.olay;
+  }
+  else if ( oric->type == MACH_TELESTRAT )
+  {
+    oric->romon = ( oric->tele_banktype == TELEBANK_ROM );
   } else {
     oric->romon = !oric->romdis;
   }
@@ -314,7 +318,7 @@ void atmoswrite( struct m6502 *cpu, unsigned short addr, unsigned char data )
   oric->mem[addr] = data;
 }
 
-// 16k oric-1 CPU write
+// Oric-1 16k CPU write
 void o16kwrite( struct m6502 *cpu, unsigned short addr, unsigned char data )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -393,7 +397,7 @@ void telestratwrite( struct m6502 *cpu, unsigned short addr, unsigned char data 
   oric->mem[addr] = data;
 }
 
-// Atmos + jasmin
+// Oric Atmos + jasmin
 void jasmin_atmoswrite( struct m6502 *cpu, unsigned short addr, unsigned char data )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -427,7 +431,7 @@ void jasmin_atmoswrite( struct m6502 *cpu, unsigned short addr, unsigned char da
   oric->mem[addr] = data;
 }
 
-// 16k + jasmin
+// Oric-1 16k + jasmin
 void jasmin_o16kwrite( struct m6502 *cpu, unsigned short addr, unsigned char data )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -462,7 +466,7 @@ void jasmin_o16kwrite( struct m6502 *cpu, unsigned short addr, unsigned char dat
   oric->mem[addr&0x3fff] = data;
 }
 
-// Atmos + microdisc
+// Oric Atmos + microdisc
 void microdisc_atmoswrite( struct m6502 *cpu, unsigned short addr, unsigned char data )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -483,7 +487,7 @@ void microdisc_atmoswrite( struct m6502 *cpu, unsigned short addr, unsigned char
 
     else if( oric->ch376_activated && ( 0x340 <= addr ) && ( addr < 0x342 ) )
       ch376_oric_write(oric->ch376, addr, data);
-    
+
     else
       via_write( &oric->via, addr, data );
 
@@ -492,7 +496,7 @@ void microdisc_atmoswrite( struct m6502 *cpu, unsigned short addr, unsigned char
   oric->mem[addr] = data;
 }
 
-// Atmos + microdisc
+// Oric-1 16k + microdisc
 void microdisc_o16kwrite( struct m6502 *cpu, unsigned short addr, unsigned char data )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -701,7 +705,7 @@ unsigned char telestratread( struct m6502 *cpu, unsigned short addr )
   return oric->mem[addr];
 }
 
-// Atmos + jasmin
+// Oric Atmos + jasmin
 unsigned char jasmin_atmosread( struct m6502 *cpu, unsigned short addr )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -733,7 +737,7 @@ unsigned char jasmin_atmosread( struct m6502 *cpu, unsigned short addr )
   return oric->mem[addr];
 }
 
-// 16k + jasmin
+// Oric 16k + jasmin
 unsigned char jasmin_o16kread( struct m6502 *cpu, unsigned short addr )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -765,7 +769,7 @@ unsigned char jasmin_o16kread( struct m6502 *cpu, unsigned short addr )
   return oric->mem[addr&0x3fff];
 }
 
-// Atmos + microdisc
+// Oric Atmos + microdisc
 unsigned char microdisc_atmosread( struct m6502 *cpu, unsigned short addr )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -796,7 +800,7 @@ unsigned char microdisc_atmosread( struct m6502 *cpu, unsigned short addr )
   return oric->mem[addr];
 }
 
-// Atmos + microdisc
+// Oric-1 16k + microdisc
 unsigned char microdisc_o16kread( struct m6502 *cpu, unsigned short addr )
 {
   struct machine *oric = (struct machine *)cpu->userdata;
@@ -994,12 +998,14 @@ void preinit_machine( struct machine *oric )
   oric->kbjoy1[3] = SDLK_KP6;
   oric->kbjoy1[4] = SDLK_KP_ENTER;
   oric->kbjoy1[5] = SDLK_KP_PLUS;
+  oric->kbjoy1[6] = SDLK_KP_MINUS;
   oric->kbjoy2[0] = 'w';
   oric->kbjoy2[1] = 's';
   oric->kbjoy2[2] = 'a';
   oric->kbjoy2[3] = 'd';
   oric->kbjoy2[4] = SDLK_SPACE;
   oric->kbjoy2[5] = 'n';
+  oric->kbjoy2[5] = SDLK_LALT;
 
   oric->drivetype = DRV_NONE;
   for( i=0; i<MAX_DRIVES; i++ )
@@ -1014,10 +1020,10 @@ void preinit_machine( struct machine *oric )
   oric->lightpenx = 0;
   oric->lightpeny = 0;
   oric->read_not_lightpen = NULL;
-  
+
   oric->printenable = SDL_TRUE;
   oric->printfilter = SDL_TRUE;
-  
+
   oric->aciabackend = ACIA_TYPE_NONE;
   oric->aciaoffset = 0x31c;
 
@@ -1027,7 +1033,7 @@ void preinit_machine( struct machine *oric )
   oric->show_keyboard = SDL_FALSE;
   oric->define_mapping = SDL_FALSE;
   oric->sticky_mod_keys = SDL_FALSE;
-  
+
   oric->pravdiskautoboot = SDL_TRUE;
 }
 
