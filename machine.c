@@ -60,7 +60,7 @@ extern char diskpath[], diskfile[], filetmp[];
 extern char telediskpath[], telediskfile[];
 extern char pravdiskpath[], pravdiskfile[];
 extern SDL_bool refreshstatus, refreshavi;
-extern int g_menu_scheme; // #InfoBadDesign - init g_menu_scheme should be done lesewher - machine.c should not depend on gui - but this is the only place I know
+extern int g_menu_scheme; // #InfoBadDesign - init g_menu_scheme should be done elsewhere - machine.c should not depend on gui - but this is the only place I know
 
 char atmosromfile[1024];
 char oric1romfile[1024];
@@ -109,6 +109,13 @@ static Uint8 ftdos_detect[] =
     0xfb, 0x78, 0xa9, 0x7f, 0x8d, 0x0e, 0x03, 0xa9, 0x01, 0x8d, 0xfa, 0x03, 0xa9, 0x00, 0x8d, 0xfb,
     0x03, 0x85, 0x04, 0x8d, 0xf4, 0x03, 0xa2, 0x02, 0xac, 0x30, 0x02, 0xc0, 0x40, 0xd0, 0x04, 0xa9,
     0x04, 0xa2, 0x06, 0x85, 0x01, 0x8e, 0x53, 0x04, 0xa9, 0xac, 0x8d, 0xfe, 0xff, 0xa9, 0x04, 0x8d,
+  };
+
+static Uint8 ftdos_master_detect[] =
+  {
+    0xfb, 0xea, 0x78, 0xa9, 0x7f, 0x8d, 0x0e, 0x03, 0xa9, 0x01, 0x8d, 0xfa, 0x03, 0xa9, 0x00, 0x8d,
+    0xfb, 0x03, 0x85, 0x04, 0x85, 0x01, 0x8d, 0xf4, 0x03, 0xa9, 0xab, 0x8d, 0xfe, 0xff, 0xa9, 0x04,
+    0x8d, 0xff, 0xff, 0x8d, 0x39, 0x04, 0x8d, 0x48, 0x04, 0x8d, 0x66, 0x04, 0xa9, 0x03, 0x85, 0x02,
   };
 
 int detect_image_type(char *filename)
@@ -215,6 +222,9 @@ int detect_image_type(char *filename)
         return IMG_TELESTRAT_DISK;
 
       if (memcmp(ptr, ftdos_detect, sizeof(ftdos_detect))==0)
+        return IMG_ATMOS_JASMIN;
+
+      if (memcmp(ptr, ftdos_master_detect, sizeof(ftdos_master_detect))==0)
         return IMG_ATMOS_JASMIN;
     }
 
@@ -1864,7 +1874,6 @@ void shut_machine( struct machine *oric )
   mon_freesyms( &oric->tele_banksyms[7] );
 }
 
-void shut( void );
 void setdrivetype( struct machine *oric, struct osdmenuitem *mitem, int type )
 {
   if( oric->drivetype == type )
@@ -1895,7 +1904,7 @@ void setdrivetype( struct machine *oric, struct osdmenuitem *mitem, int type )
   mon_state_reset( oric );
   if( !init_machine( oric, oric->type, SDL_FALSE ) )
   {
-    shut();
+    shut( oric );
     exit( EXIT_FAILURE );
   }
 
@@ -1924,7 +1933,7 @@ void swapmach( struct machine *oric, struct osdmenuitem *mitem, int which )
   mon_state_reset( oric );
   if( !init_machine( oric, which, which!=oric->type ) )
   {
-    shut();
+    shut( oric );
     exit( EXIT_FAILURE );
   }
 }

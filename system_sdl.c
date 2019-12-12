@@ -92,16 +92,16 @@ static void FreeResources(void)
     g_glcontext = NULL;
   }
 
+  if (g_texture)
+  {
+    SDL_DestroyTexture(g_texture);
+    g_texture = NULL;
+  }
+
   if(g_renderer)
   {
     SDL_DestroyRenderer(g_renderer);
     g_renderer = NULL;
-  }
-
-  if(g_texture)
-  {
-    SDL_DestroyTexture(g_texture);
-    g_texture = NULL;
   }
 
   if(g_screen)
@@ -159,7 +159,6 @@ void SDL_COMPAT_WM_SetIcon(SDL_Surface *icon, Uint8 *mask)
   if(icon)
   {
     g_icon = icon;
-    g_icon->refcount++;
   }
 }
 void SDL_COMPAT_WM_SetCaption(const char *title, const char *icon)
@@ -378,10 +377,20 @@ SDL_Surface* SDL_COMPAT_SetVideoMode(int width, int height, int bitsperpixel, Ui
 
   FreeResources();
 
+  // When leaving fullscreen mode, X and Y coordinates should be recentered relative to the display.
+  if (flags ^ SDL_WINDOW_FULLSCREEN) {
+      g_lastx = SDL_WINDOWPOS_CENTERED;
+      g_lasty = SDL_WINDOWPOS_CENTERED;
+  }
+
   g_window = SDL_CreateWindow("oricutron", g_lastx, g_lasty,
                               g_width, g_height, flags);
-  if(g_icon)
+  if (g_icon)
+  {
     SDL_SetWindowIcon(g_window, g_icon);
+    // ...and the surface containing the icon pixel data is no longer required.
+    SDL_FreeSurface(g_icon);
+  }
 
   if(flags & SDL_WINDOW_OPENGL)
   {

@@ -63,6 +63,12 @@
 #include "snapshot.h"
 #include "keyboard.h"
 
+#ifdef _MSC_VER
+#if SDL_MAJOR_VERSION == 1
+#undef main
+#endif
+#endif
+
 #define FRAMES_TO_AVERAGE 8
 
 SDL_bool need_sdl_quit = SDL_FALSE;
@@ -81,6 +87,18 @@ extern char telebankfiles[8][1024];
 
 static char keymap_path[4096+32];
 static int  load_keymap = SDL_FALSE;
+
+struct context
+{
+  struct machine oric;
+  SDL_Event event;
+  Uint64 nextframe_us;
+  Uint32 nextframe_ms;
+  Uint32 now;
+  Uint32 then;
+  SDL_bool needrender;
+  SDL_bool framedone;
+};
 
 #ifdef __amigaos4__
 char __attribute__((used)) stackcookie[] = "$STACK: 1000000";
@@ -1187,9 +1205,9 @@ SDL_bool init( struct machine *oric, int argc, char *argv[] )
     }
     else
     {
-      int i = 0;
+      int off = 0;
       unsigned int addr;
-      if( !mon_getnum( oric, &addr, sto->start_breakpoint, &i, SDL_FALSE, SDL_FALSE, SDL_FALSE, SDL_TRUE ) )
+      if( !mon_getnum( oric, &addr, sto->start_breakpoint, &off, SDL_FALSE, SDL_FALSE, SDL_FALSE, SDL_TRUE ) )
       {
         error_printf( "Invalid breakpoint" );
         free( sto );
@@ -1361,10 +1379,150 @@ void once_per_frame( struct machine *oric )
   }
 }
 
+static void loop_handler( void* arg )
+{
+  struct context* ctx = arg;
+  struct machine* oric = &ctx->oric;
+  SDL_Event* event = &ctx->event;
+
+  SDL_bool done = SDL_FALSE;
+  Sint32 i;
+
+  while (!done)
+  {
+    if ( oric->emu_mode == EM_PLEASEQUIT )
+      break;
+
+    if ( oric->emu_mode == EM_RUNNING )
+    {
+      if (oric->overclockmult == 1)
+        frameloop_normal( oric, &ctx->framedone, &ctx->needrender );
+      else
+        frameloop_overclock( oric, &ctx->framedone, &ctx->needrender );
+
+      ay_unlockaudio( &oric->ay );
+
+      if (ctx->framedone)
+      {
+        ctx->nextframe_us += oric->vid_freq ? 20000LL : 16667LL;
+        ctx->nextframe_ms = (Uint32)(ctx->nextframe_us / 1000LL);
+
+        if (warpspeed)
+        {
+          if ((oric->frames&3)==0)
+            ctx->needrender = SDL_TRUE;
+        }
+        else
+        {
+          ctx->needrender = SDL_TRUE;
+        }
+      }
+
+      if (ctx->needrender)
+      {
+        render( oric );
+        ctx->needrender = SDL_FALSE;
+      }
+
+      if (ctx->framedone)
+      {
+        once_per_frame( oric );
+
+        ctx->then = ctx->now;
+        ctx->now = SDL_GetTicks();
+
+        frametimeave = 0;
+        for (i = (FRAMES_TO_AVERAGE - 1); i > 0; i--)
+        {
+          lastframetimes[i] = lastframetimes[i - 1];
+          frametimeave += lastframetimes[i];
+        }
+        lastframetimes[0] = ctx->now - ctx->then;
+        frametimeave = (frametimeave + lastframetimes[0]) / FRAMES_TO_AVERAGE;
+
+        if (warpspeed)
+        {
+          ctx->nextframe_ms = ctx->now;
+          ctx->nextframe_us = ((Uint64)ctx->nextframe_ms) * 1000;
+        }
+        else
+        {
+          if (ctx->now > ctx->nextframe_ms)
+          {
+            ctx->nextframe_ms = ctx->now;
+            ctx->nextframe_us = ((Uint64)ctx->nextframe_ms) * 1000;
+          }
+          else
+          {
+            SDL_Delay(ctx->nextframe_ms - ctx->now);
+          }
+        }
+        ctx->framedone = SDL_FALSE;
+      }
+
+      if (!SDL_PollEvent(event))
+        continue;
+    }
+    else
+    {
+      ay_unlockaudio( &oric->ay );
+      if (ctx->needrender)
+      {
+        render( oric );
+        ctx->needrender = SDL_FALSE;
+      }
+      if (!SDL_WaitEvent(event))
+        break;
+    }
+
+    do {
+      switch (event->type)
+      {
+        case SDL_COMPAT_ACTIVEEVENT:
+        {
+          if (SDL_COMPAT_IsAppActive(event))
+          {
+            oric->shut_render(oric);
+            oric->init_render(oric);
+            ctx->needrender = SDL_TRUE;
+          }
+        }
+        break;
+        case SDL_QUIT:
+          done = SDL_TRUE;
+          break;
+
+        default:
+          switch ( oric->emu_mode )
+          {
+            case EM_MENU:
+              done |= menu_event( event, oric, &ctx->needrender );
+              break;
+
+            case EM_RUNNING:
+              done |= emu_event( event, oric, &ctx->needrender );
+              break;
+
+            case EM_DEBUG:
+              done |= mon_event( event, oric, &ctx->needrender );
+              break;
+          }
+      }
+      if (oric->show_keyboard)
+        keyboard_event( event, oric, &ctx->needrender );
+
+    } while ( SDL_PollEvent( event ) );
+  }
+
+  {
+    ay_unlockaudio(&oric->ay);
+    shut(oric);
+  }
+}
+
 int main( int argc, char *argv[] )
 {
-  static struct machine oric;
-  SDL_bool isinit;
+  static struct context ctx;
 
 #ifdef _MSC_VER
   _CrtSetDbgFlag(_CRTDBG_ALLOC_MEM_DF | _CRTDBG_LEAK_CHECK_DF);
@@ -1374,8 +1532,6 @@ int main( int argc, char *argv[] )
 #ifndef __MORPHOS__
   putenv("SDL_VIDEO_CENTERED=center");
 #endif
-
-  memset(&oric, 0, sizeof(oric));
 
     // ----------------------------------------------------------------------------
     // This makes relative paths work in C++ in Xcode by changing directory to the Resources folder inside the .app bundle
@@ -1395,155 +1551,26 @@ int main( int argc, char *argv[] )
     //printf("Current Path: %s\n", path);
 #endif
 
-  if( ( isinit = init( &oric, argc, argv ) ) )
+  memset(&ctx.oric, 0, sizeof(ctx.oric));
+  if (!init(&ctx.oric, argc, argv))
   {
-    Uint64 nextframe_us;
-    Uint32 nextframe_ms, now=0, then;
-    SDL_bool done, needrender, framedone;
-    Sint32 i;
-
-    now = SDL_GetTicks();
-    nextframe_ms = now;
-    nextframe_us = ((Uint64)nextframe_ms)*1000;
-
-    done = SDL_FALSE;
-    needrender = SDL_TRUE;
-    framedone = SDL_FALSE;
-
-    if(load_keymap)
-    {
-      load_keyboard_mapping( &oric, keymap_path );
-      load_keymap = SDL_FALSE;
-    }
-
-    while( !done )
-    {
-      SDL_Event event;
-
-      if( oric.emu_mode == EM_PLEASEQUIT )
-        break;
-
-      if( oric.emu_mode == EM_RUNNING )
-      {
-        if( oric.overclockmult==1 )
-          frameloop_normal( &oric, &framedone, &needrender );
-        else
-          frameloop_overclock( &oric, &framedone, &needrender );
-
-        ay_unlockaudio( &oric.ay );
-
-        if( framedone )
-        {
-          nextframe_us += oric.vid_freq ? 20000LL : 16667LL;
-          nextframe_ms = (Uint32)(nextframe_us/1000LL);
-
-          if (warpspeed)
-          {
-            if ((oric.frames&3)==0)
-              needrender = SDL_TRUE;
-          }
-          else
-          {
-            needrender = SDL_TRUE;
-          }
-        }
-
-        if( needrender )
-        {
-          render( &oric );
-          needrender = SDL_FALSE;
-        }
-
-        if( framedone )
-        {
-          once_per_frame( &oric );
-
-          then = now;
-          now = SDL_GetTicks();
-
-          frametimeave = 0;
-          for( i=(FRAMES_TO_AVERAGE-1); i>0; i-- )
-          {
-            lastframetimes[i] = lastframetimes[i-1];
-            frametimeave += lastframetimes[i];
-          }
-          lastframetimes[0] = now-then;
-          frametimeave = (frametimeave+lastframetimes[0])/FRAMES_TO_AVERAGE;
-
-          if (warpspeed)
-          {
-            nextframe_ms = now;
-            nextframe_us = ((Uint64)nextframe_ms)*1000;
-          }
-          else
-          {
-            if (now > nextframe_ms)
-            {
-              nextframe_ms = now;
-              nextframe_us = ((Uint64)nextframe_ms)*1000;
-            }
-            else
-            {
-              SDL_Delay(nextframe_ms-now);
-            }
-          }
-          framedone = SDL_FALSE;
-        }
-
-        if( !SDL_PollEvent( &event ) ) continue;
-      }
-      else
-      {
-        ay_unlockaudio( &oric.ay );
-        if( needrender )
-        {
-          render( &oric );
-          needrender = SDL_FALSE;
-        }
-        if( !SDL_WaitEvent( &event ) ) break;
-      }
-
-      do {
-        switch( event.type )
-        {
-          case SDL_COMPAT_ACTIVEEVENT:
-            {
-                if(SDL_COMPAT_IsAppActive(&event))
-                {
-                    oric.shut_render(&oric);
-                    oric.init_render(&oric);
-                    needrender = SDL_TRUE;
-                }
-            }
-            break;
-          case SDL_QUIT:
-            done = SDL_TRUE;
-            break;
-
-          default:
-            switch( oric.emu_mode )
-            {
-              case EM_MENU:
-                done |= menu_event( &event, &oric, &needrender );
-                break;
-
-              case EM_RUNNING:
-                done |= emu_event( &event, &oric, &needrender );
-                break;
-
-              case EM_DEBUG:
-                done |= mon_event( &event, &oric, &needrender );
-                break;
-            }
-        }
-        if (oric.show_keyboard)
-            keyboard_event( &event, &oric, &needrender );
-
-      } while( SDL_PollEvent( &event ) );
-    }
-    ay_unlockaudio( &oric.ay );
+    shut(&ctx.oric);
+    return EXIT_FAILURE;
   }
-  shut( &oric );
+  // call to SDL_GetTicks must be behind init
+  ctx.now = SDL_GetTicks();
+  ctx.nextframe_ms = ctx.now;
+  ctx.nextframe_us = ((Uint64)ctx.nextframe_ms) * 1000;
+  ctx.needrender = SDL_TRUE;
+  ctx.framedone = SDL_FALSE;
 
-  return isinit ? EXIT_SUCCESS : EXIT_FAILURE;
+  if (load_keymap)
+  {
+    load_keyboard_mapping(&ctx.oric, keymap_path);
+    load_keymap = SDL_FALSE;
+  }
+
+  loop_handler(&ctx);
+
+  return EXIT_SUCCESS;
 }
